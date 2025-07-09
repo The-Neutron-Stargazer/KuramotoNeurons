@@ -1,0 +1,134 @@
+import matplotlib.pyplot as plt
+import numpy as np
+from brian2 import *
+from matplotlib import animation
+from brian2 import prefs
+
+prefs.codegen.target = 'numpy' # because my laptop is shit??
+
+# Number of "neurons" (oscillators)
+N = 50
+defaultclock.dt = 1 * ms
+
+
+# Function to simulate brain-inspired Kuramoto oscillators
+def run_brain_kuramoto_sim(K, runtime=10 * second, random_seed=42):
+    seed(random_seed)
+
+    # Differential equation for each oscillator's phase
+    eqs = '''
+    dTheta/dt = omega + K/N*coupling : radian
+    omega : radian/second (constant)
+    coupling : 1
+    '''
+
+    # Define a NeuronGroup of N oscillators
+    neurons = NeuronGroup(N, eqs, method='euler')
+
+    # Each neuron starts with a random phase and slightly different intrinsic frequency
+    neurons.Theta = 'rand()*2*pi'
+    neurons.omega = 'clip(1 + 0.3*randn(), 0.5, 2.0)*radian/second'  # variability mimics natural frequency spread in neurons
+
+    # All-to-all sinusoidal coupling (like global field)
+    synapses = Synapses(neurons, neurons,
+                        'coupling_post = sin(Theta_pre - Theta_post) : 1 (summed)')
+    synapses.connect()
+
+    # Track the phase of each neuron over time
+    mon_theta = StateMonitor(neurons, 'Theta', record=True)
+
+    # Run simulation
+    run(runtime)
+    return mon_theta.Theta[:]
+
+
+# ------------------------------
+# Helper Functions
+# ------------------------------
+
+def to_x_y(phases):
+    return np.cos(phases), np.sin(phases)
+
+
+def calc_order_param(x, y):
+    r = np.sqrt(np.sum(x) ** 2 + np.sum(y) ** 2) / N
+    phi = np.arctan2(np.sum(y), np.sum(x))
+    return r, phi
+
+
+def compute_order_parameter_series(Theta_array):
+    R_series = []
+    for t in range(Theta_array.shape[1]):
+        x, y = to_x_y(Theta_array[:, t])
+        r, _ = calc_order_param(x, y)
+        R_series.append(r)
+    return np.array(R_series)
+
+
+# ------------------------------
+# Visualization
+# ------------------------------
+
+def animate_brain_oscillators(fig, axes, K_vals, theta_vals, duration=10 * second):
+    artists = []
+    for ax, K, Theta in zip(axes, K_vals, theta_vals):
+        x, y = to_x_y(Theta.T[0])
+        dots = ax.scatter(x, y, c=Theta.T[0], cmap='turbo', vmin=0, vmax=2 * np.pi)
+        r, phi = calc_order_param(x, y)
+        mean_dot, = ax.plot(r * np.cos(phi), r * np.sin(phi), 'o', color='black')
+        ax.set_title(f"K = {K:.1f}")
+        ax.set_aspect('equal')
+        ax.axis('off')
+        ax.set(xlim=(-1.2, 1.2), ylim=(-1.2, 1.2))
+        artists.append((dots, mean_dot))
+
+    frame_delay = 40 * ms
+    num_frames = int(duration / frame_delay)
+
+    def update(frame_number):
+        updated = []
+        for (dots, mean_dot), Theta in zip(artists, theta_vals):
+            t = frame_number
+            x, y = to_x_y(Theta.T[t])
+            dots.set_offsets(np.column_stack((x, y)))
+            r, phi = calc_order_param(x, y)
+            mean_dot.set_data([r * np.cos(phi)], [r * np.sin(phi)])
+            updated += [dots, mean_dot]
+        return updated
+
+    ani = animation.FuncAnimation(fig, update, frames=num_frames, interval=40, blit=False)
+    return ani
+
+
+# ------------------------------
+# Main: Simulate & Visualize
+# ------------------------------
+
+if __name__ == '__main__':
+    fig, axs = plt.subplots(2, 2, figsize=(8, 8))
+    fig.subplots_adjust(wspace=0.1, hspace=0.3)
+
+    K_vals = np.linspace(0, 4, 4)
+    theta_vals = []
+    R_curves = []
+
+    for i, K in enumerate(K_vals):
+        print(f"Running simulation for K = {K:.2f}")
+        Theta1 = run_brain_kuramoto_sim(K / second)
+        theta_vals.append(Theta1)
+        R_curves.append(compute_order_parameter_series(Theta1))
+
+    # Plot R(t) - Synchrony level over time
+    plt.figure(figsize=(8, 4))
+    for R, K in zip(R_curves, K_vals):
+        plt.plot(np.arange(len(R)) * defaultclock.dt / ms, R, label=f"K={K:.1f}")
+    plt.xlabel("Time (ms)")
+    plt.ylabel("Order Parameter R(t)")
+    plt.title("Synchronization Across Coupling Strengths")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    # Animate oscillator phases on the unit circle
+    ani = animate_brain_oscillators(fig, axs.flat, K_vals, theta_vals)
+    plt.show()

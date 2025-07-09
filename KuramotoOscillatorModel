@@ -1,0 +1,88 @@
+import matplotlib.pyplot as plt
+import numpy as np
+from brian2 import *
+from matplotlib import animation
+from brian2 import prefs
+prefs.codegen.target = 'numpy'
+
+# global params
+N = 50
+defaultclock.dt = 1*ms
+
+def run_sim(K, random_seed=42):  # simulation
+    seed(random_seed)
+
+    eqs = '''
+    dTheta/dt = omega + K/N*coupling : radian
+    omega : radian/second (constant)
+    coupling : 1
+    '''
+
+    oscillators = NeuronGroup(N, eqs, method='euler')
+    oscillators.Theta = 'rand()*2*pi'
+    oscillators.omega = 'clip(0.5 + randn()*0.5, 0, inf)*radian/second'
+
+    connections = Synapses(oscillators, oscillators,
+                           'coupling_post = sin(Theta_pre - Theta_post) : 1 (summed)')
+    connections.connect()
+
+    mon = StateMonitor(oscillators, 'Theta', record=True)
+    run(5*second)
+    return mon.Theta[:]
+
+# Helper functions
+def to_x_y(phases):
+    return np.cos(phases), np.sin(phases)
+
+def calc_coherence_and_phase(x, y):
+    phi = np.arctan2(np.sum(y), np.sum(x))
+    r = np.sqrt(np.sum(x)**2 + np.sum(y)**2)/N
+    return r, phi
+
+# Animation function
+def do_animation(fig, axes, K_values, theta_values, duration=5*second): #increase duration as you please
+    artists = []
+    for ax, K, Theta in zip(axes, K_values, theta_values):
+        x, y = to_x_y(Theta.T[0])
+        dots = ax.scatter(x, y, c=Theta.T[0], cmap='inferno')
+        r, phi = calc_coherence_and_phase(x, y)
+        mean_dot, = ax.plot(r*np.cos(phi), r*np.sin(phi), 'o', color='black')
+        ax.set_title(f"K = {K:.1f}")
+        ax.set_aspect('equal')
+        ax.axis('off')
+        ax.set(xlim=(-1.2, 1.2), ylim=(-1.2, 1.2))
+        artists.append((dots, mean_dot))
+
+    frame_delay = 40*ms
+    num_frames = int(duration/frame_delay)
+
+    def update(frame_number):
+        updated = []
+        for (dots, mean_dot), Theta in zip(artists, theta_values):
+            t = frame_number
+            x, y = to_x_y(Theta.T[t])
+            dots.set_offsets(np.column_stack((x, y)))
+            r, phi = calc_coherence_and_phase(x, y)
+            mean_dot.set_data([r*np.cos(phi)], [r*np.sin(phi)])
+            updated += [dots, mean_dot]
+        return updated
+
+    ani = animation.FuncAnimation(fig, update, frames=num_frames, interval=40, blit=False)
+    return ani
+
+# Main execution
+if __name__ == '__main__':
+    fig, axs = plt.subplots(2, 2, figsize=(8, 8))
+    fig.subplots_adjust(wspace=0.1, hspace=0.3)
+
+    k_start = 0
+    k_end = 4
+    K_values = np.linspace(k_start, k_end, num=4)
+    theta_values = []
+
+    for i, K in enumerate(K_values):
+        print(f"[{i+1}/{len(K_values)}] Running simulation for K = {K:.2f}")
+        theta_values.append(run_sim(K/second))
+
+    ani = do_animation(fig, axs.flat, K_values, theta_values)
+    plt.show()

@@ -1,0 +1,106 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Parameters
+t_max = 0.1
+dt = 0.0001
+tau = 0.02
+el = -0.07
+r = 10e6
+i_mean = 1e-9
+vth = -0.06
+v_reset = -0.07
+
+def ode_step(v, i, dt):
+    """
+    Evolves membrane potential by one step of discrete time integration.
+    """
+    v = v + dt / tau * (el - v + r * i)
+    return v
+
+def spike_clamp(v, delta_spike, t_ref):
+    """
+    Resets membrane potential of neurons that spiked and clamps those in refractory period.
+    """
+    spiked = v >= vth
+    v[spiked] = v_reset
+
+    clamped = delta_spike < t_ref
+    v[clamped] = v_reset
+
+    return v, spiked
+
+# random number generator
+np.random.seed(42)
+
+# initializing
+t_range = np.arange(0, t_max, dt)
+step_end = len(t_range)
+n = 500
+v_n = el * np.ones([n,step_end])
+i = i_mean * (1+0.1 * (t_max/dt)**(0.5) * (2 * np.random.random([n, step_end]) - 1))
+
+# Initialize binary numpy array for raster plot
+raster = np.zeros([n,step_end])
+
+# Initialize t_ref and last_spike
+mu = 0.01
+sigma = 0.007
+t_ref = mu + sigma*np.random.normal(size=n)
+t_ref[t_ref<0] = 0
+last_spike = -t_ref * np.ones([n])
+
+# Loop over time steps
+for step, t in enumerate(t_range):
+
+  # Skip first iteration
+  if step==0:
+    continue
+
+  # Compute v_n
+  v_n[:,step] = ode_step(v_n[:,step-1], i[:,step], dt)
+
+  # Reset membrane potential and clamp
+  v_n[:,step], spiked = spike_clamp(v_n[:,step], t - last_spike, t_ref)
+
+  # Update raster and last_spike
+  raster[spiked,step] = 1.
+  last_spike[spiked] = t
+
+# Plot: Upper panel — Membrane potential
+ax1 = plt.subplot(3, 1, 1)
+for j in range(n):
+    plt.scatter(t_range, v_n[j], color="k", marker=".", alpha=0.01)
+v_mean = np.mean(v_n, axis=0)
+plt.plot(t_range, v_mean, 'C1', linewidth=2)
+plt.ylabel('$V_m$ (V)')
+
+# Plot: Middle panel — Raster plot
+plt.subplot(3, 1, 2, sharex=ax1)
+for j in range(n):
+    times = t_range[raster[j] == 1]
+    plt.scatter(times, [j]*len(times), marker='|', color='k', s=5)
+plt.ylabel('neuron')
+
+# Plot: Bottom panel — Population spike rate
+plt.subplot(3, 1, 3, sharex=ax1)
+spikes_mean = np.sum(raster, axis=0) / n
+plt.plot(t_range, spikes_mean, 'C0')
+plt.xlabel('time (s)')
+plt.ylabel('rate (Hz)')
+
+plt.tight_layout()
+plt.show()
+
+# Histogram of refractory periods
+plt.figure(figsize=(8, 4))
+plt.hist(t_ref, bins=32, histtype='stepfilled', linewidth=0, color='C1')
+plt.xlabel(r'$t_{ref}$ (s)')
+plt.ylabel('count')
+plt.tight_layout()
+plt.show()
+
+"""after plotting with the NMA given values, there was no spiking activity,
+realized this was because of either a weak I value to over come vth and
+have a spike & firing rate
+decreased vth = -0.06 and got this sexy thang"""
